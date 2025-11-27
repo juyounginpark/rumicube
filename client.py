@@ -323,9 +323,6 @@ def main():
     
     my_tank = Tank(n.p_id, player_name, get_random_spawn(init['obstacles']))
     explosions = []
-    remote_bullets = []
-    received_bullet_ids = set()
-    received_explosion_ids = set()
 
     run = True
     while run:
@@ -361,14 +358,7 @@ def main():
         s_exps = state['explosions']
         kill_logs = state['kill_logs']
         init['obstacles'] = obstacles
-
         s_bullets = state.get('bullets', [])
-        for b in s_bullets:
-            if b.get('p_id') != my_tank.id:
-                bullet_id = b.get('id')
-                if bullet_id and bullet_id not in received_bullet_ids:
-                    remote_bullets.append(b)
-                    received_bullet_ids.add(bullet_id)
 
         if my_tank.id in s_players:
             server_me = s_players[my_tank.id]
@@ -383,26 +373,17 @@ def main():
         keys = pygame.key.get_pressed()
         my_tank.move(keys, obstacles, s_players, items)
         my_tank.update_bullets(obstacles, s_players)
-
-        for b in remote_bullets[:]:
-            rad = math.radians(b['angle'])
-            b['x'] += math.cos(rad) * 10
-            b['y'] -= math.sin(rad) * 10
-            b['life'] -= 1
-            if b['life'] <= 0:
-                remote_bullets.remove(b)
-                if b.get('id') in received_bullet_ids:
-                    received_bullet_ids.remove(b.get('id'))
-
-        for e in s_exps:
-            exp_id = e.get('id')
-            if exp_id and exp_id not in received_explosion_ids:
-                color = (255,100,0)
-                if e['type'] == 'hit': color = (200,200,200)
-                elif e['type'] == 'heal': color = (0,255,0)
-                explosions.append({'id': exp_id, 'x':e['x'], 'y':e['y'], 'r':1, 'max_r':e['r'], 'a':255, 'c':color})
-                received_explosion_ids.add(exp_id)
         
+        # 클라이언트 측 폭발 애니메이션 관리 (단순화)
+        new_explosions = []
+        for e in s_exps:
+            # 폭발 효과는 매번 새로 생성하여 애니메이션
+            color = (255,100,0)
+            if e['type'] == 'hit': color = (200,200,200)
+            elif e['type'] == 'heal': color = (0,255,0)
+            new_explosions.append({'id': e.get('id'), 'x':e['x'], 'y':e['y'], 'r':1, 'max_r':e['r'], 'a':255, 'c':color})
+        explosions = new_explosions
+
         # --- Draw ---
         screen.fill(WHITE)
         
@@ -439,15 +420,15 @@ def main():
             for b in my_tank.bullets:
                 pygame.draw.circle(screen, b['color'], (int(b['x']), int(b['y'])), int(b['radius']))
             
-            for b in remote_bullets:
-                pygame.draw.circle(screen, b['color'], (int(b['x']), int(b['y'])), int(b['radius']))
+            # 서버가 보내준 다른 플레이어의 총알 그리기
+            for b in s_bullets:
+                if b.get('p_id') != my_tank.id:
+                    pygame.draw.circle(screen, b['color'], (int(b['x']), int(b['y'])), int(b['radius']))
 
         for e in explosions[:]:
             e['r'] += 2; e['a'] -= 5
             if e['a'] <= 0: 
                 explosions.remove(e)
-                if e.get('id') in received_explosion_ids:
-                    received_explosion_ids.remove(e.get('id'))
                 continue
             s = pygame.Surface((e['r']*2,e['r']*2), pygame.SRCALPHA)
             pygame.draw.circle(s, (*e['c'], e['a']), (e['r'],e['r']), int(e['r']))

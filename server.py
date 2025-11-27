@@ -22,6 +22,8 @@ item_counter = 0
 bullet_events = []
 client_connections = []
 
+BULLET_SPEED = 600 # 초당 픽셀
+
 def spawn_obstacle():
     global obs_counter
     for _ in range(50):
@@ -149,13 +151,23 @@ def handle_client(conn, p_id):
                 if 'new_bullets' in recv_data:
                     for b in recv_data['new_bullets']:
                         b['p_id'] = p_id
-                        b['time'] = current_time 
+                        b['time'] = current_time
+                        b['ox'] = b['x']
+                        b['oy'] = b['y']
                     bullet_events.extend(recv_data['new_bullets'])
 
                 # 오래된 이벤트 삭제
                 kill_logs = [log for log in kill_logs if log['time'] > current_time]
                 bullet_events = [b for b in bullet_events if current_time - b.get('time', 0) < 2]
                 explosion_events = [e for e in explosion_events if current_time - e.get('time', 0) < 2]
+                
+                # 총알 위치 업데이트
+                for b in bullet_events:
+                    elapsed = current_time - b['time']
+                    dist = elapsed * BULLET_SPEED
+                    rad = math.radians(b['angle'])
+                    b['x'] = b['ox'] + math.cos(rad) * dist
+                    b['y'] = b['oy'] - math.sin(rad) * dist
                 
                 reply = {
                     'players': players,
@@ -166,12 +178,15 @@ def handle_client(conn, p_id):
                 }
                 
                 # 모든 클라이언트에게 브로드캐스트
-                for client_conn in client_connections:
+                for client_conn in list(client_connections):
                     try:
                         client_conn.send(pickle.dumps(reply))
                     except socket.error as e:
                         print(f"클라이언트 연결 에러 발생: {e}")
-                        client_connections.remove(client_conn)
+                        try:
+                            client_connections.remove(client_conn)
+                        except ValueError:
+                            pass # 이미 다른 스레드에서 제거됨
 
 
         except Exception as e:
