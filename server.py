@@ -9,6 +9,9 @@ HOST = '0.0.0.0'
 PORT = 5555
 WIDTH, HEIGHT = 800, 600
 
+# 스레드 동기화를 위한 Lock 객체
+data_lock = threading.Lock()
+
 # 게임 데이터
 players = {}
 obstacles = []
@@ -17,6 +20,7 @@ kill_logs = []
 obs_counter = 0
 item_counter = 0
 bullet_events = []
+client_connections = []
 
 def spawn_obstacle():
     global obs_counter
@@ -43,126 +47,140 @@ while len(obstacles) < 12:
     if new_obs: obstacles.append(new_obs)
 
 def handle_client(conn, p_id):
-    global players, obstacles, explosion_events, kill_logs
+    global players, obstacles, explosion_events, kill_logs, bullet_events, client_connections
     
     conn.send(pickle.dumps(p_id))
     
-    players[p_id] = {
-        'x': -1000, 'y': -1000, 
-        'name': 'Guest', 'hp': 10, 'max_hp': 10, 'lv': 1.0, 
-        'point': 0, 'dead': False 
-    }
+    with data_lock:
+        players[p_id] = {
+            'x': -1000, 'y': -1000, 
+            'name': 'Guest', 'hp': 10, 'max_hp': 10, 'lv': 1.0, 
+            'point': 0, 'dead': False 
+        }
+        client_connections.append(conn)
 
     while True:
         try:
             recv_data = pickle.loads(conn.recv(4096))
             if not recv_data: break
             
-            current_time = time.time()
-            
-            # 1. 상태 동기화
-            if 'me' in recv_data:
-                me = recv_data['me']
+            with data_lock:
+                current_time = time.time()
                 
-                if me.get('respawn_req', False):
-                    players[p_id]['hp'] = 10
-                    players[p_id]['max_hp'] = 10
-                    players[p_id]['lv'] = 1.0
-                    players[p_id]['point'] = 0
-                    players[p_id]['dead'] = False
-                
-                players[p_id]['x'] = me['x']
-                players[p_id]['y'] = me['y']
-                players[p_id]['ba'] = me['ba']
-                players[p_id]['ta'] = me['ta']
-                players[p_id]['c'] = me['c']
-                
-                if not me.get('respawn_req', False):
-                    if me['lv'] > players[p_id]['lv']:
-                         players[p_id]['hp'] = me['max_hp'] # 레벨업 회복
-                         players[p_id]['lv'] = me['lv']
-                    players[p_id]['point'] = me['point']
-                    players[p_id]['max_hp'] = me['max_hp']
-                
-                players[p_id]['name'] = me['name']
-                if me['is_dead']: players[p_id]['dead'] = True
-
-            # 3. 장애물 피격
-            if 'hit_obs' in recv_data:
-                target_id = recv_data['hit_obs']
-                dmg = recv_data.get('damage', 1)
-                for i, obs in enumerate(obstacles):
-                    if obs['id'] == target_id:
-                        obs['hp'] -= dmg
-                        explosion_events.append({'id': (time.time(), random.random()), 'x': obs['x'], 'y': obs['y'], 'r': 10, 'type': 'hit', 'time': current_time})
-                        
-                        if obs['hp'] <= 0:
-                            # 폭발
-                            explosion_events.append({'id': (time.time(), random.random()), 'x': obs['x'], 'y': obs['y'], 'r': obs['r'], 'type': 'obs', 'time': current_time})
-                            
-
-                            # 폭발 데미지 (근접)
-                            ox, oy = obs['x'], obs['y']
-                            for pid, p in players.items():
-                                if p['dead']: continue
-                                dist = math.hypot(p['x'] - ox, p['y'] - oy)
-                                if dist < obs['r'] + 45: 
-                                    p['hp'] -= 5
-                                    explosion_events.append({'id': (time.time(), random.random()), 'x': p['x'], 'y': p['y'], 'r': 20, 'type': 'hit', 'time': current_time})
-                                    if p['hp'] <= 0:
-                                        p['hp'] = 0; p['dead'] = True
-                                        kill_logs.append({'msg': f"{p['name']}님이 폭발에 휘말렸습니다.", 'time': current_time + 3})
-                                        explosion_events.append({'id': (time.time(), random.random()), 'x': p['x'], 'y': p['y'], 'r': 40, 'type': 'player', 'time': current_time})
-
-                            obstacles.pop(i)
-                            new_obs = spawn_obstacle()
-                            if new_obs: obstacles.append(new_obs)
-                        break
-            
-            # 4. 플레이어 피격
-            if 'hit_player' in recv_data:
-                target_pid = recv_data['hit_player']
-                dmg = recv_data['damage']
-                attacker_name = players[p_id]['name']
-                
-                if target_pid in players and not players[target_pid]['dead']:
-                    players[target_pid]['hp'] -= dmg
-                    explosion_events.append({'id': (time.time(), random.random()), 'x': players[target_pid]['x'], 'y': players[target_pid]['y'], 'r': 15, 'type': 'hit', 'time': current_time})
+                # 1. 상태 동기화
+                if 'me' in recv_data:
+                    me = recv_data['me']
                     
-                    if players[target_pid]['hp'] <= 0:
-                        players[target_pid]['hp'] = 0; players[target_pid]['dead'] = True
-                        victim_name = players[target_pid]['name']
-                        reward = players[target_pid]['lv'] * 0.5
-                        players[p_id]['lv'] += reward
+                    if me.get('respawn_req', False):
+                        players[p_id]['hp'] = 10
+                        players[p_id]['max_hp'] = 10
+                        players[p_id]['lv'] = 1.0
+                        players[p_id]['point'] = 0
+                        players[p_id]['dead'] = False
+                    
+                    players[p_id]['x'] = me['x']
+                    players[p_id]['y'] = me['y']
+                    players[p_id]['ba'] = me['ba']
+                    players[p_id]['ta'] = me['ta']
+                    players[p_id]['c'] = me['c']
+                    
+                    if not me.get('respawn_req', False):
+                        if me['lv'] > players[p_id]['lv']:
+                             players[p_id]['hp'] = me['max_hp'] # 레벨업 회복
+                             players[p_id]['lv'] = me['lv']
+                        players[p_id]['point'] = me['point']
+                        players[p_id]['max_hp'] = me['max_hp']
+                    
+                    players[p_id]['name'] = me['name']
+                    if me['is_dead']: players[p_id]['dead'] = True
+
+                # 3. 장애물 피격
+                if 'hit_obs' in recv_data:
+                    target_id = recv_data['hit_obs']
+                    dmg = recv_data.get('damage', 1)
+                    for i, obs in enumerate(obstacles):
+                        if obs['id'] == target_id:
+                            obs['hp'] -= dmg
+                            explosion_events.append({'id': (time.time(), random.random()), 'x': obs['x'], 'y': obs['y'], 'r': 10, 'type': 'hit', 'time': current_time})
+                            
+                            if obs['hp'] <= 0:
+                                # 폭발
+                                explosion_events.append({'id': (time.time(), random.random()), 'x': obs['x'], 'y': obs['y'], 'r': obs['r'], 'type': 'obs', 'time': current_time})
+                                
+
+                                # 폭발 데미지 (근접)
+                                ox, oy = obs['x'], obs['y']
+                                for pid, p in players.items():
+                                    if p['dead']: continue
+                                    dist = math.hypot(p['x'] - ox, p['y'] - oy)
+                                    if dist < obs['r'] + 45: 
+                                        p['hp'] -= 5
+                                        explosion_events.append({'id': (time.time(), random.random()), 'x': p['x'], 'y': p['y'], 'r': 20, 'type': 'hit', 'time': current_time})
+                                        if p['hp'] <= 0:
+                                            p['hp'] = 0; p['dead'] = True
+                                            kill_logs.append({'msg': f"{p['name']}님이 폭발에 휘말렸습니다.", 'time': current_time + 3})
+                                            explosion_events.append({'id': (time.time(), random.random()), 'x': p['x'], 'y': p['y'], 'r': 40, 'type': 'player', 'time': current_time})
+
+                                obstacles.pop(i)
+                                new_obs = spawn_obstacle()
+                                if new_obs: obstacles.append(new_obs)
+                            break
+                
+                # 4. 플레이어 피격
+                if 'hit_player' in recv_data:
+                    target_pid = recv_data['hit_player']
+                    dmg = recv_data['damage']
+                    attacker_name = players[p_id]['name']
+                    
+                    if target_pid in players and not players[target_pid]['dead']:
+                        players[target_pid]['hp'] -= dmg
+                        explosion_events.append({'id': (time.time(), random.random()), 'x': players[target_pid]['x'], 'y': players[target_pid]['y'], 'r': 15, 'type': 'hit', 'time': current_time})
                         
-                        msg = f"{attacker_name}님이 {victim_name}님을 처치했습니다."
-                        kill_logs.append({'msg': msg, 'time': current_time + 3})
-                        explosion_events.append({'id': (time.time(), random.random()), 'x': players[target_pid]['x'], 'y': players[target_pid]['y'], 'r': 40, 'type': 'player', 'time': current_time})
+                        if players[target_pid]['hp'] <= 0:
+                            players[target_pid]['hp'] = 0; players[target_pid]['dead'] = True
+                            victim_name = players[target_pid]['name']
+                            reward = players[target_pid]['lv'] * 0.5
+                            players[p_id]['lv'] += reward
+                            
+                            msg = f"{attacker_name}님이 {victim_name}님을 처치했습니다."
+                            kill_logs.append({'msg': msg, 'time': current_time + 3})
+                            explosion_events.append({'id': (time.time(), random.random()), 'x': players[target_pid]['x'], 'y': players[target_pid]['y'], 'r': 40, 'type': 'player', 'time': current_time})
 
-            if 'new_bullets' in recv_data:
-                for b in recv_data['new_bullets']:
-                    b['p_id'] = p_id
-                    b['time'] = current_time 
-                bullet_events.extend(recv_data['new_bullets'])
+                if 'new_bullets' in recv_data:
+                    for b in recv_data['new_bullets']:
+                        b['p_id'] = p_id
+                        b['time'] = current_time 
+                    bullet_events.extend(recv_data['new_bullets'])
 
-            # 오래된 이벤트 삭제
-            kill_logs = [log for log in kill_logs if log['time'] > current_time]
-            bullet_events = [b for b in bullet_events if current_time - b.get('time', 0) < 2]
-            explosion_events = [e for e in explosion_events if current_time - e.get('time', 0) < 2]
-            
-            reply = {
-                'players': players,
-                'obstacles': obstacles,
-                'explosions': explosion_events,
-                'kill_logs': kill_logs,
-                'bullets': bullet_events
-            }
-            conn.send(pickle.dumps(reply))
+                # 오래된 이벤트 삭제
+                kill_logs = [log for log in kill_logs if log['time'] > current_time]
+                bullet_events = [b for b in bullet_events if current_time - b.get('time', 0) < 2]
+                explosion_events = [e for e in explosion_events if current_time - e.get('time', 0) < 2]
+                
+                reply = {
+                    'players': players,
+                    'obstacles': obstacles,
+                    'explosions': explosion_events,
+                    'kill_logs': kill_logs,
+                    'bullets': bullet_events
+                }
+                
+                # 모든 클라이언트에게 브로드캐스트
+                for client_conn in client_connections:
+                    try:
+                        client_conn.send(pickle.dumps(reply))
+                    except socket.error as e:
+                        print(f"클라이언트 연결 에러 발생: {e}")
+                        client_connections.remove(client_conn)
+
 
         except Exception as e:
             break
             
-    if p_id in players: del players[p_id]
+    with data_lock:
+        if p_id in players: del players[p_id]
+        if conn in client_connections:
+            client_connections.remove(conn)
     conn.close()
 
 def main():

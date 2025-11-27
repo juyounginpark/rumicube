@@ -417,6 +417,8 @@ def main():
         
         for pid, p in s_players.items():
             if pid == n.p_id: continue
+            # 디버그: 다른 플레이어의 총구 각도 출력
+            # print(f"Player {pid} Turret Angle: {p['ta']}")
             draw_tank_model(screen, p['x'], p['y'], p['ba'], p['ta'], p['c'], p['lv'], p['name'], p['hp'], p['max_hp'], p['dead'])
         
         if my_tank.is_dead:
