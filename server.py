@@ -94,11 +94,11 @@ def handle_client(conn, p_id):
                 for i, obs in enumerate(obstacles):
                     if obs['id'] == target_id:
                         obs['hp'] -= dmg
-                        explosion_events.append({'x': obs['x'], 'y': obs['y'], 'r': 10, 'type': 'hit'})
+                        explosion_events.append({'id': (time.time(), random.random()), 'x': obs['x'], 'y': obs['y'], 'r': 10, 'type': 'hit', 'time': current_time})
                         
                         if obs['hp'] <= 0:
                             # 폭발
-                            explosion_events.append({'x': obs['x'], 'y': obs['y'], 'r': obs['r'], 'type': 'obs'})
+                            explosion_events.append({'id': (time.time(), random.random()), 'x': obs['x'], 'y': obs['y'], 'r': obs['r'], 'type': 'obs', 'time': current_time})
                             
 
                             # 폭발 데미지 (근접)
@@ -108,11 +108,11 @@ def handle_client(conn, p_id):
                                 dist = math.hypot(p['x'] - ox, p['y'] - oy)
                                 if dist < obs['r'] + 45: 
                                     p['hp'] -= 5
-                                    explosion_events.append({'x': p['x'], 'y': p['y'], 'r': 20, 'type': 'hit'})
+                                    explosion_events.append({'id': (time.time(), random.random()), 'x': p['x'], 'y': p['y'], 'r': 20, 'type': 'hit', 'time': current_time})
                                     if p['hp'] <= 0:
                                         p['hp'] = 0; p['dead'] = True
                                         kill_logs.append({'msg': f"{p['name']}님이 폭발에 휘말렸습니다.", 'time': current_time + 3})
-                                        explosion_events.append({'x': p['x'], 'y': p['y'], 'r': 40, 'type': 'player'})
+                                        explosion_events.append({'id': (time.time(), random.random()), 'x': p['x'], 'y': p['y'], 'r': 40, 'type': 'player', 'time': current_time})
 
                             obstacles.pop(i)
                             new_obs = spawn_obstacle()
@@ -127,7 +127,7 @@ def handle_client(conn, p_id):
                 
                 if target_pid in players and not players[target_pid]['dead']:
                     players[target_pid]['hp'] -= dmg
-                    explosion_events.append({'x': players[target_pid]['x'], 'y': players[target_pid]['y'], 'r': 15, 'type': 'hit'})
+                    explosion_events.append({'id': (time.time(), random.random()), 'x': players[target_pid]['x'], 'y': players[target_pid]['y'], 'r': 15, 'type': 'hit', 'time': current_time})
                     
                     if players[target_pid]['hp'] <= 0:
                         players[target_pid]['hp'] = 0; players[target_pid]['dead'] = True
@@ -137,15 +137,18 @@ def handle_client(conn, p_id):
                         
                         msg = f"{attacker_name}님이 {victim_name}님을 처치했습니다."
                         kill_logs.append({'msg': msg, 'time': current_time + 3})
-                        explosion_events.append({'x': players[target_pid]['x'], 'y': players[target_pid]['y'], 'r': 40, 'type': 'player'})
+                        explosion_events.append({'id': (time.time(), random.random()), 'x': players[target_pid]['x'], 'y': players[target_pid]['y'], 'r': 40, 'type': 'player', 'time': current_time})
 
             if 'new_bullets' in recv_data:
                 for b in recv_data['new_bullets']:
                     b['p_id'] = p_id
+                    b['time'] = current_time 
                 bullet_events.extend(recv_data['new_bullets'])
 
-            # 오래된 로그 삭제
+            # 오래된 이벤트 삭제
             kill_logs = [log for log in kill_logs if log['time'] > current_time]
+            bullet_events = [b for b in bullet_events if current_time - b.get('time', 0) < 2]
+            explosion_events = [e for e in explosion_events if current_time - e.get('time', 0) < 2]
             
             reply = {
                 'players': players,
@@ -155,8 +158,6 @@ def handle_client(conn, p_id):
                 'bullets': bullet_events
             }
             conn.send(pickle.dumps(reply))
-            if explosion_events: explosion_events.clear()
-            if bullet_events: bullet_events.clear()
 
         except Exception as e:
             break

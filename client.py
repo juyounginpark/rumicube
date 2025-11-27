@@ -325,6 +325,7 @@ def main():
     explosions = []
     remote_bullets = []
     received_bullet_ids = set()
+    received_explosion_ids = set()
 
     run = True
     while run:
@@ -394,11 +395,14 @@ def main():
                     received_bullet_ids.remove(b.get('id'))
 
         for e in s_exps:
-            color = (255,100,0)
-            if e['type'] == 'hit': color = (200,200,200)
-            elif e['type'] == 'heal': color = (0,255,0)
-            explosions.append({'x':e['x'], 'y':e['y'], 'r':1, 'max_r':e['r'], 'a':255, 'c':color})
-
+            exp_id = e.get('id')
+            if exp_id and exp_id not in received_explosion_ids:
+                color = (255,100,0)
+                if e['type'] == 'hit': color = (200,200,200)
+                elif e['type'] == 'heal': color = (0,255,0)
+                explosions.append({'id': exp_id, 'x':e['x'], 'y':e['y'], 'r':1, 'max_r':e['r'], 'a':255, 'c':color})
+                received_explosion_ids.add(exp_id)
+        
         # --- Draw ---
         screen.fill(WHITE)
         
@@ -438,7 +442,11 @@ def main():
 
         for e in explosions[:]:
             e['r'] += 2; e['a'] -= 5
-            if e['a'] <= 0: explosions.remove(e); continue
+            if e['a'] <= 0: 
+                explosions.remove(e)
+                if e.get('id') in received_explosion_ids:
+                    received_explosion_ids.remove(e.get('id'))
+                continue
             s = pygame.Surface((e['r']*2,e['r']*2), pygame.SRCALPHA)
             pygame.draw.circle(s, (*e['c'], e['a']), (e['r'],e['r']), int(e['r']))
             screen.blit(s, (e['x']-e['r'], e['y']-e['r']))
