@@ -1,5 +1,11 @@
 # 미니 탱크 게임!
 
+# 실행방법
+1. dist 파일 클릭
+2. client 파일 클릭
+3. client.exe 실행
+#### dist/client/client.exe
+
 ## 조작
 - 앞/뒤 : W/S
 - 몸체 회전 : A/D
