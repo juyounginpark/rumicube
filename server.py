@@ -70,7 +70,7 @@ def handle_client(conn, p_id):
             with data_lock:
                 current_time = time.time()
                 
-                # 1. 상태 동기화
+                # 1. 클라이언트 입력 처리
                 if 'me' in recv_data:
                     me = recv_data['me']
                     if p_id in players:
@@ -90,15 +90,44 @@ def handle_client(conn, p_id):
                         
                         if me['is_dead']: players[p_id]['dead'] = True
 
-                # 3. 장애물 피격
-                if 'hit_obs' in recv_data:
-                    target_id = recv_data['hit_obs']
-                    dmg = recv_data.get('damage', 1)
+                if 'new_bullets' in recv_data:
+                    for b in recv_data['new_bullets']:
+                        b['p_id'] = p_id
+                        b['time'] = current_time
+                        b['ox'] = b['x']
+                        b['oy'] = b['y']
+                    bullet_events.extend(recv_data['new_bullets'])
+
+                # --- 서버 사이드 게임 로직 ---
+                
+                # 2. 총알 위치 업데이트 및 충돌 감지
+                bullets_to_remove = set()
+                for b in bullet_events:
+                    elapsed = current_time - b['time']
+                    dist = elapsed * BULLET_SPEED
+                    rad = math.radians(b['angle'])
+                    b['x'] = b['ox'] + math.cos(rad) * dist
+                    b['y'] = b['oy'] - math.sin(rad) * dist
+
+                    # 경계 체크
+                    if not (0 <= b['x'] <= WIDTH and 0 <= b['y'] <= HEIGHT):
+                        bullets_to_remove.add(b['id'])
+                        continue
+
+                    # 충돌 감지 (장애물)
                     for i, obs in enumerate(obstacles):
-                        if obs['id'] == target_id:
-                            obs['hp'] -= dmg
+                        if math.hypot(b['x']-obs['x'], b['y']-obs['y']) < b['radius'] + obs['r']:
+                            bullets_to_remove.add(b['id'])
+                            obs['hp'] -= 1 # 고정 데미지 1
                             explosion_events.append({'id': (time.time(), random.random()), 'x': obs['x'], 'y': obs['y'], 'r': 10, 'type': 'hit', 'time': current_time})
                             
+                            # 발사한 플레이어에게 포인트 부여
+                            if b['p_id'] in players:
+                                players[b['p_id']]['point'] += 1
+                                if players[b['p_id']]['point'] % 10 == 0:
+                                    players[b['p_id']]['lv'] += 1.0
+                                    players[b['p_id']]['max_hp'] = 10 + (int(players[b['p_id']]['lv']) * 5)
+
                             if obs['hp'] <= 0:
                                 explosion_events.append({'id': (time.time(), random.random()), 'x': obs['x'], 'y': obs['y'], 'r': obs['r'], 'type': 'obs', 'time': current_time})
                                 ox, oy = obs['x'], obs['y']
@@ -114,51 +143,42 @@ def handle_client(conn, p_id):
                                 obstacles.pop(i)
                                 new_obs = spawn_obstacle()
                                 if new_obs: obstacles.append(new_obs)
+                            break 
+                    if b['id'] in bullets_to_remove: continue
+
+                    # 충돌 감지 (플레이어)
+                    for pid, p in players.items():
+                        if p['dead'] or b['p_id'] == pid: continue
+                        p_size = (40 * min(1 + int(p['lv'])*0.1, 3.0))/2
+                        if math.hypot(b['x']-p['x'], b['y']-p['y']) < b['radius'] + p_size:
+                            bullets_to_remove.add(b['id'])
+                            attacker = players.get(b['p_id'])
+                            if attacker:
+                                dmg = 2 + int(attacker['lv'] * 0.5)
+                                p['hp'] -= dmg
+                                explosion_events.append({'id': (time.time(), random.random()), 'x': p['x'], 'y': p['y'], 'r': 15, 'type': 'hit', 'time': current_time})
+                                
+                                if p['hp'] <= 0:
+                                    p['hp'] = 0; p['dead'] = True
+                                    reward = p['lv'] * 0.5
+                                    attacker['lv'] += reward
+                                    kill_logs.append({'msg': f"{attacker['name']}님이 {p['name']}님을 처치했습니다.", 'time': current_time + 3})
+                                    explosion_events.append({'id': (time.time(), random.random()), 'x': p['x'], 'y': p['y'], 'r': 40, 'type': 'player', 'time': current_time})
                             break
                 
-                # 4. 플레이어 피격
-                if 'hit_player' in recv_data:
-                    target_pid = recv_data['hit_player']
-                    dmg = recv_data['damage']
-                    if p_id in players:
-                        attacker_name = players[p_id]['name']
-                        if target_pid in players and not players[target_pid]['dead']:
-                            players[target_pid]['hp'] -= dmg
-                            explosion_events.append({'id': (time.time(), random.random()), 'x': players[target_pid]['x'], 'y': players[target_pid]['y'], 'r': 15, 'type': 'hit', 'time': current_time})
-                            
-                            if players[target_pid]['hp'] <= 0:
-                                players[target_pid]['hp'] = 0; players[target_pid]['dead'] = True
-                                victim_name = players[target_pid]['name']
-                                reward = players[target_pid]['lv'] * 0.5
-                                players[p_id]['lv'] += reward
-                                kill_logs.append({'msg': f"{attacker_name}님이 {victim_name}님을 처치했습니다.", 'time': current_time + 3})
-                                explosion_events.append({'id': (time.time(), random.random()), 'x': players[target_pid]['x'], 'y': players[target_pid]['y'], 'r': 40, 'type': 'player', 'time': current_time})
-
-                if 'new_bullets' in recv_data:
-                    for b in recv_data['new_bullets']:
-                        b['p_id'] = p_id
-                        b['time'] = current_time
-                        b['ox'] = b['x']
-                        b['oy'] = b['y']
-                    bullet_events.extend(recv_data['new_bullets'])
-
+                # 3. 오래된 이벤트 및 충돌난 총알 제거
                 kill_logs = [log for log in kill_logs if log['time'] > current_time]
-                bullet_events = [b for b in bullet_events if current_time - b.get('time', 0) < 2]
+                bullet_events = [b for b in bullet_events if current_time - b.get('time', 0) < 2 and b['id'] not in bullets_to_remove]
                 explosion_events = [e for e in explosion_events if current_time - e.get('time', 0) < 2]
-                
-                for b in bullet_events:
-                    elapsed = current_time - b['time']
-                    dist = elapsed * BULLET_SPEED
-                    rad = math.radians(b['angle'])
-                    b['x'] = b['ox'] + math.cos(rad) * dist
-                    b['y'] = b['oy'] - math.sin(rad) * dist
-                
+
+                # 4. 최종 게임 상태 패키징
                 reply_data = {
                     'players': players, 'obstacles': obstacles,
                     'explosions': explosion_events, 'kill_logs': kill_logs,
                     'bullets': bullet_events
                 }
             
+            # 5. 브로드캐스팅 (락 외부에서)
             disconnected_clients = []
             for client_conn in list(client_connections):
                 try:

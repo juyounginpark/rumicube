@@ -208,38 +208,7 @@ class Tank:
             self.track_timer += 1
 
     def update_bullets(self, obstacles, other_players, server_bullets):
-        if self.is_dead: return
-        self.net_actions = {} 
-        
-        # 내 총알에 대한 충돌 감지만 수행
-        my_bullets = [b for b in server_bullets if b.get('p_id') == self.id]
-        
-        for b in my_bullets:
-            hit = False
-            for obs in obstacles:
-                if math.hypot(b['x']-obs['x'], b['y']-obs['y']) < b['radius'] + obs['r']:
-                    self.net_actions['hit_obs'] = obs['id']
-                    self.point += 1
-                    if self.point % 10 == 0:
-                        self.lv += 1.0
-                        self.max_hp = 10 + (int(self.lv) * 5)
-                        self.hp = self.max_hp 
-                    hit = True; break
-            
-            if not hit:
-                for pid, p in other_players.items():
-                    if pid == self.id or p['dead']: continue
-                    or_r = (40 * min(1 + int(p['lv'])*0.1, 3.0))/2
-                    if math.hypot(b['x']-p['x'], b['y']-p['y']) < b['radius'] + or_r:
-                        dmg = 2 + int(self.lv * 0.5)
-                        self.net_actions['hit_player'] = pid
-                        self.net_actions['damage'] = dmg
-                        hit = True; break
-            
-            if hit: 
-                # 서버가 총알을 삭제하므로 클라이언트에서는 아무것도 하지 않음
-                # 단, 충돌 이벤트는 한번만 보내기 위해 즉시 net_actions를 업데이트
-                return
+        pass
 
 def get_random_spawn(obstacles):
     while True:
@@ -339,6 +308,7 @@ def main():
                 'respawn_req': my_tank.respawn_req 
             }
         }
+        my_tank.net_actions.clear() # 충돌 감지 로직이 사라졌으므로 매번 초기화
         data.update(my_tank.net_actions)
         my_tank.respawn_req = False
 
@@ -365,7 +335,6 @@ def main():
 
         keys = pygame.key.get_pressed()
         my_tank.move(keys, obstacles, s_players, items)
-        my_tank.update_bullets(obstacles, s_players, s_bullets)
         
         # 클라이언트 측 폭발 애니메이션 관리 (단순화)
         new_explosions = []
