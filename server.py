@@ -6,7 +6,7 @@ import math
 import time
 
 HOST = '0.0.0.0'
-PORT = 5555
+PORT = 80
 WIDTH, HEIGHT = 800, 600
 
 # 데이터 보호를 위한 Lock
@@ -173,6 +173,25 @@ def game_logic_thread():
         time.sleep(0.016)
 
 def handle_client(conn, p_id):
+    try:
+        # 가짜 HTTP 요청 수신 및 무시
+        request = conn.recv(4096)
+        if not request.startswith(b'GET / HTTP/1.1'):
+             print(f"Invalid handshake from {p_id}")
+             conn.close()
+             return
+
+        # 가짜 HTTP 응답 전송
+        response = (
+            b"HTTP/1.1 101 Switching Protocols\r\n"
+            b"Upgrade: websocket\r\n"
+            b"Connection: Upgrade\r\n\r\n"
+        )
+        conn.sendall(response)
+    except Exception as e:
+        print(f"Handshake with {p_id} failed: {e}")
+        conn.close()
+        return
     conn.send(pickle.dumps(p_id))
     
     with data_lock:

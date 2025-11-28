@@ -6,7 +6,7 @@ import pickle
 
 WIDTH, HEIGHT = 800, 600
 HOST = '52.79.106.125' 
-PORT = 5555
+PORT = 80
 
 # 색상
 WHITE = (255, 255, 255)
@@ -46,10 +46,30 @@ class Network:
     def connect(self):
         try:
             self.client.connect((HOST, PORT))
+            
+            # 가짜 HTTP 요청 전송
+            http_request = (
+                f"GET / HTTP/1.1\r\n"
+                f"Host: {HOST}:{PORT}\r\n"
+                f"Upgrade: websocket\r\n"
+                f"Connection: Upgrade\r\n"
+                f"User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36\r\n"
+                f"\r\n"
+            )
+            self.client.sendall(http_request.encode('utf-8'))
+
+            # 가짜 HTTP 응답 수신 및 무시
+            response = self.client.recv(4096)
+            if not response.startswith(b'HTTP/1.1 101'):
+                print("Handshake failed.")
+                self.client.close()
+                return False
+
             self.p_id = pickle.loads(self.client.recv(2048))
             self.connected = True
             return True
-        except: 
+        except Exception as e:
+            print(f"Connection error: {e}") 
             return False
 
     def send(self, data):
